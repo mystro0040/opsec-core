@@ -1,0 +1,6 @@
+{
+  "campaign_dirs": ["examples"],
+  "paths": {
+    "example_notes": {"path": "examples/app.conf", "kind": "config"}
+  }
+}
