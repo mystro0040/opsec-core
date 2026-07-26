@@ -311,6 +311,68 @@ def test_global_flags_survive_subcommand():
     chk("--campaign-dir before the subcommand survives", g.campaign_dir == ["d1"], g.campaign_dir)
 
 
+def test_config_relative_paths_are_config_relative():
+    """A relative path in a config file resolves against the CONFIG, not the process cwd.
+
+    Regression (2026-07-25): opsec-private's config says `campaign_dirs: ["campaigns"]`. Run the
+    gate from opsec-private and you get 18 checks; run the identical command with the identical
+    --config from any other directory and `campaigns` resolved against the wrong cwd, matched
+    nothing, and the run printed CLEAR after registering 5 builtin checks instead of 18. The
+    verdict was a lie and nothing in the output said so.
+
+    So: same config + same command must mean the same checks, from anywhere on the filesystem.
+    """
+    print("[cli] config-relative paths do not depend on the caller's cwd")
+    from opsec.cli import build_context, make_parser
+
+    with tempfile.TemporaryDirectory() as td:
+        cdir = os.path.join(td, "campaigns")
+        os.makedirs(cdir)
+        with open(os.path.join(cdir, "campaign.py"), "w") as fh:
+            fh.write("NAME = 'fixture'\n\n\ndef register(ctx):\n"
+                     "    ctx.paths.register('fixture_path', __file__)\n")
+        cfg = os.path.join(td, "opsec.config.json")
+        with open(cfg, "w") as fh:
+            fh.write('{"campaign_dirs": ["campaigns"], "paths": {"rel": "campaigns"}}')
+
+        seen = []
+        for cwd in (td, os.path.dirname(os.path.abspath(__file__)), tempfile.gettempdir()):
+            prev = os.getcwd()
+            try:
+                os.chdir(cwd)
+                ctx, loaded = build_context(make_parser().parse_args(["--config", cfg, "check"]))
+                seen.append((len(loaded), len(ctx.checks), len(ctx.paths)))
+            finally:
+                os.chdir(prev)
+
+        chk("the campaign loads at all", seen[0][0] == 1, seen)
+        chk("identical results from every cwd", len(set(seen)) == 1, seen)
+        # And the relative `paths` entry must point into the config's dir, not the caller's.
+        prev = os.getcwd()
+        try:
+            os.chdir(tempfile.gettempdir())
+            ctx, _ = build_context(make_parser().parse_args(["--config", cfg, "check"]))
+            resolved = ctx.paths.get("rel").path
+        finally:
+            os.chdir(prev)
+        chk("a relative config `paths` entry resolves against the config too",
+            os.path.realpath(resolved) == os.path.realpath(cdir), resolved)
+
+    # An operator-typed --campaign-dir keeps cwd semantics; that is what a shell prompt means.
+    with tempfile.TemporaryDirectory() as td:
+        cdir = os.path.join(td, "cli_camp")
+        os.makedirs(cdir)
+        with open(os.path.join(cdir, "campaign.py"), "w") as fh:
+            fh.write("NAME = 'typed'\n\n\ndef register(ctx):\n    pass\n")
+        prev = os.getcwd()
+        try:
+            os.chdir(td)
+            _, loaded = build_context(make_parser().parse_args(["--campaign-dir", "cli_camp", "check"]))
+            chk("--campaign-dir stays relative to the shell's cwd", len(loaded) == 1, loaded)
+        finally:
+            os.chdir(prev)
+
+
 def test_builtins_and_cli_default():
     print("[cli] soft is the default; hard is always opt-in")
     from opsec.cli import make_parser
@@ -339,7 +401,8 @@ def main():
               test_soft_guard_restores, test_path_registry,
               test_check_registry_overrides_and_select, test_pattern_factories,
               test_verdict_threshold, test_campaign_contract,
-              test_global_flags_survive_subcommand, test_builtins_and_cli_default):
+              test_global_flags_survive_subcommand,
+              test_config_relative_paths_are_config_relative, test_builtins_and_cli_default):
         t()
     print(f"\n{_PASS}/{_PASS + _FAIL} passed")
     return 1 if _FAIL else 0

@@ -29,10 +29,30 @@ ENV_CONFIG = "OPSEC_CONFIG"
 ENV_CAMPAIGNS = "OPSEC_CAMPAIGN_DIRS"
 
 
+def _resolve_against(base: str, spec: str) -> str:
+    """Resolve a path that came out of a config file.
+
+    A relative path inside a config file means "relative to the config file", never "relative to
+    whatever directory the operator happened to be standing in". Getting this wrong is silent and
+    dangerous: `campaign_dirs: ["campaigns"]` resolved against the process cwd finds nothing when
+    the tool is invoked from elsewhere, so every campaign check disappears and the run prints
+    CLEAR after verifying almost nothing. Found on 2026-07-25 running the pre-engagement gate from
+    the opsec-core checkout instead of opsec-private: 18 checks silently became 5, still CLEAR.
+
+    Paths from --campaign-dir and from $OPSEC_CAMPAIGN_DIRS are deliberately NOT sent through
+    here — the operator typed those at a shell prompt, so cwd-relative is what they meant.
+    """
+    spec = os.path.expanduser(spec)
+    return spec if os.path.isabs(spec) else os.path.normpath(os.path.join(base, spec))
+
+
 def build_context(args) -> tuple[Context, list]:
     """Assemble the context: config, builtins, campaigns, registered paths."""
     config = campaigns_mod.load_config(args.config)
     ctx = Context(config=config, paths=PathRegistry(), checks=CheckRegistry(), mode="soft")
+
+    # Everything relative inside the config resolves against the config file's own directory.
+    base = os.path.dirname(os.path.abspath(os.path.expanduser(args.config))) if args.config else os.getcwd()
 
     if not args.no_builtins:
         register_builtins(ctx.checks)
@@ -40,14 +60,15 @@ def build_context(args) -> tuple[Context, list]:
     # Paths declared in the config file itself, before campaigns, so a campaign can depend on them.
     for name, spec in (config.get("paths") or {}).items():
         if isinstance(spec, str):
-            ctx.paths.register(name, spec)
+            ctx.paths.register(name, _resolve_against(base, spec))
         else:
-            ctx.paths.register(name, spec["path"], kind=spec.get("kind", "config"),
+            ctx.paths.register(name, _resolve_against(base, spec["path"]),
+                               kind=spec.get("kind", "config"),
                                optional=bool(spec.get("optional", False)),
                                note=spec.get("note", ""))
 
     dirs = list(args.campaign_dir or [])
-    dirs += config.get("campaign_dirs") or []
+    dirs += [_resolve_against(base, d) for d in (config.get("campaign_dirs") or [])]
     if os.environ.get(ENV_CAMPAIGNS):
         dirs += [d for d in os.environ[ENV_CAMPAIGNS].split(os.pathsep) if d]
     loaded, _ = campaigns_mod.load_all(ctx, dirs, strict=True)
