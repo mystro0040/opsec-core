@@ -2,7 +2,7 @@
 
 Regenerate with `workspace.py test --write-expectations`. This lists the suites whose tests live in THIS directory, what each covers, how to run it, and the expected result.
 
-> **Directive:** Tests are a REGRESSION FLOOR, not a substitute for exercising the real tool. When you change or upgrade a tool you MUST do BOTH: (1) drive the actual application to confirm the change works, and (2) run AND update its suite here. Green tests on unchanged code prove nothing about code you just changed. Never skip the live app because tests pass; never skip updating tests because the app works.
+> **Directive:** Tests are a REGRESSION FLOOR, not a substitute for exercising the real tool. ALWAYS do two things when you change a tool: (1) drive the actual application to confirm the change works, and (2) RUN the suites -- the whole registry is ~17s, there is no case for skipping it. Green tests on unchanged code prove nothing about code you just changed. AUTHORING a suite is the expensive part, so ration it by blast radius (amended 2026-07-29, operator's call): ALWAYS write/update a suite for anything that can fail SILENTLY or destroy work -- the scope wall, scope compilation, credentials, execution location, the rate ceiling, or anything that deletes/overwrites/syncs. DO NOT author suites for prose, docs, config text, naming, or one-off scripts. In between: run the suites, note the gap, batch it -- do not stop the work. Clear the backlog with `workspace.py test --drift` at a checkpoint, not mid-task.
 
 ## opsec-core  ·  safety  ·  CRITICAL
 
